@@ -331,7 +331,7 @@ fi
         """创建部署信息文件"""
         print("=== 创建部署信息 ===")
         
-        deployment_info = {{
+        deployment_info = {
             "app_name": self.app_name,
             "deployment_time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "user": self.user,
@@ -341,7 +341,7 @@ fi
             "nginx_config": f"/etc/nginx/conf.d/{self.app_name}.conf",
             "log_directory": f"/var/log/{self.app_name}",
             "health_check_script": f"/opt/{self.app_name}/health_check.sh"
-        }}
+        }
         
         info_path = f"/opt/{self.app_name}/deployment_info.json"
         with open(info_path, 'w', encoding='utf-8') as f:

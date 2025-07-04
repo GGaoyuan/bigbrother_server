@@ -71,31 +71,8 @@ chmod +x $APP_DIR/app.py
 
 # 创建Gunicorn配置
 echo "创建Gunicorn配置..."
-cat > $APP_DIR/gunicorn.conf.py << EOF
-#!/usr/bin/env python3
-import multiprocessing
-
-bind = "127.0.0.1:$APP_PORT"
-workers = multiprocessing.cpu_count() * 2 + 1
-worker_class = "gevent"
-worker_connections = 1000
-max_requests = 1000
-max_requests_jitter = 50
-
-accesslog = "/var/log/$APP_NAME/access.log"
-errorlog = "/var/log/$APP_NAME/error.log"
-loglevel = "info"
-
-preload_app = True
-daemon = False
-
-timeout = 30
-keepalive = 2
-
-limit_request_line = 4094
-limit_request_fields = 100
-limit_request_field_size = 8190
-EOF
+cp gunicorn.conf.py $APP_DIR/
+chown $APP_USER:$APP_USER $APP_DIR/gunicorn.conf.py
 
 # 创建日志目录
 mkdir -p /var/log/$APP_NAME
@@ -129,32 +106,7 @@ systemctl enable $APP_NAME.service
 
 # 创建Nginx配置
 echo "创建Nginx配置..."
-cat > /etc/nginx/conf.d/$APP_NAME.conf << EOF
-server {
-    listen 80;
-    server_name _;
-    
-    location / {
-        proxy_pass http://127.0.0.1:$APP_PORT;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    
-    location /static {
-        alias $APP_DIR/static;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
-    
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "no-referrer-when-downgrade" always;
-    add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
-}
-EOF
+cp nginx.conf /etc/nginx/conf.d/$APP_NAME.conf
 
 # 启动并启用服务
 echo "启动服务..."
