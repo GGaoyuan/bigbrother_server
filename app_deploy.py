@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OpenCloudOS Flask应用部署脚本
-适用于OpenCloudOS系统的Flask项目自动化部署
+Flask应用部署脚本
+适用于OpenCloudOS系统，使用Gunicorn + Nginx架构
 """
 
 import os
 import sys
 import subprocess
-import shutil
 import json
 import time
 from pathlib import Path
 
-class OpenCloudOSDeployer:
+class FlaskDeployer:
     def __init__(self):
         self.project_root = Path(__file__).parent
         self.app_name = "bigbrother_server"
@@ -22,33 +21,32 @@ class OpenCloudOSDeployer:
         self.port = 5000
         
     def run_command(self, command, check=True, shell=True):
-        """执行系统命令"""
+        """执行系统命令（实时输出）"""
         print(f"执行命令: {command}")
         try:
-            result = subprocess.run(command, shell=shell, check=check, 
-                                  capture_output=True, text=True)
-            if result.stdout:
-                print(f"输出: {result.stdout}")
-            return result
-        except subprocess.CalledProcessError as e:
-            print(f"命令执行失败: {e}")
-            print(f"错误输出: {e.stderr}")
+            process = subprocess.Popen(
+                command, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            while True:
+                line = process.stdout.readline() if process.stdout else None
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    print(line, end='')  # 实时输出
+            retcode = process.poll()
+            if check and retcode != 0:
+                print(f"命令执行失败，退出码: {retcode}")
+                sys.exit(1)
+            return retcode
+        except Exception as e:
+            print(f"命令执行异常: {e}")
             if check:
                 sys.exit(1)
-            return e
+            return -1
     
     def check_system(self):
         """检查系统环境"""
         print("=== 检查系统环境 ===")
-        
-        # 检查是否为OpenCloudOS
-        try:
-            with open('/etc/os-release', 'r') as f:
-                content = f.read()
-                if 'OpenCloudOS' not in content:
-                    print("警告: 当前系统可能不是OpenCloudOS")
-        except FileNotFoundError:
-            print("警告: 无法确定系统类型")
         
         # 检查Python版本
         python_version = subprocess.run(['python3', '--version'], 
@@ -63,25 +61,25 @@ class OpenCloudOSDeployer:
         """安装系统依赖"""
         print("=== 安装系统依赖 ===")
         
-        # 更新包管理器
-        self.run_command("yum update -y")
+        # # 更新包管理器
+        # self.run_command("yum update -y")
         
-        # 安装基础依赖
-        dependencies = [
-            "python3",
-            "python3-pip",
-            "python3-devel",
-            "gcc",
-            "gcc-c++",
-            "make",
-            "openssl-devel",
-            "libffi-devel",
-            "nginx",
-            "supervisor"
-        ]
+        # # 安装基础依赖
+        # dependencies = [
+        #     "python3",
+        #     "python3-pip",
+        #     "python3-devel",
+        #     "gcc",
+        #     "gcc-c++",
+        #     "make",
+        #     "openssl-devel",
+        #     "libffi-devel",
+        #     "nginx",
+        #     "supervisor"
+        # ]
         
-        for dep in dependencies:
-            self.run_command(f"yum install -y {dep}")
+        # for dep in dependencies:
+        #     self.run_command(f"yum install -y {dep}")
         
         # 启动并启用nginx
         self.run_command("systemctl start nginx")
@@ -229,30 +227,74 @@ WantedBy=multi-user.target
         """创建Nginx配置"""
         print("=== 创建Nginx配置 ===")
         
-        nginx_config = f"""server {{
+        nginx_config = f"""upstream flask_app {{
+    server 127.0.0.1:{self.port};
+    keepalive 32;
+}}
+
+server {{
     listen 80;
     server_name _;
     
+    # 客户端最大请求体大小
+    client_max_body_size 10M;
+    
+    # 超时设置
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    
+    # 缓冲设置
+    proxy_buffering on;
+    proxy_buffer_size 4k;
+    proxy_buffers 8 4k;
+    proxy_busy_buffers_size 8k;
+    
+    # 主要应用路由
     location / {{
-        proxy_pass http://127.0.0.1:{self.port};
+        proxy_pass http://flask_app;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_http_version 1.1;
     }}
     
+    # 静态文件处理
     location /static {{
         alias /opt/{self.app_name}/static;
         expires 30d;
         add_header Cache-Control "public, immutable";
+        add_header X-Content-Type-Options nosniff;
     }}
     
-    # 安全配置
+    # 健康检查端点
+    location /health {{
+        proxy_pass http://flask_app;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+    }}
+    
+    # 安全头设置
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-XSS-Protection "1; mode=block" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "no-referrer-when-downgrade" always;
     add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
+    
+    # 隐藏Nginx版本
+    server_tokens off;
+    
+    # 日志配置
+    access_log /var/log/nginx/{self.app_name}_access.log;
+    error_log /var/log/nginx/{self.app_name}_error.log;
 }}
 """
         
@@ -262,25 +304,6 @@ WantedBy=multi-user.target
         
         # 测试nginx配置
         self.run_command("nginx -t")
-    
-    def create_supervisor_config(self):
-        """创建Supervisor配置（备用方案）"""
-        print("=== 创建Supervisor配置 ===")
-        
-        supervisor_config = f"""[program:{self.app_name}]
-command=/home/{self.user}/venv/bin/gunicorn -c /opt/{self.app_name}/gunicorn.conf.py app:app
-directory=/opt/{self.app_name}
-user={self.user}
-autostart=true
-autorestart=true
-redirect_stderr=true
-stdout_logfile=/var/log/{self.app_name}/supervisor.log
-environment=PATH="/home/{self.user}/venv/bin"
-"""
-        
-        supervisor_config_path = f"/etc/supervisord.d/{self.app_name}.ini"
-        with open(supervisor_config_path, 'w', encoding='utf-8') as f:
-            f.write(supervisor_config)
     
     def start_services(self):
         """启动服务"""
@@ -362,21 +385,21 @@ fi
             self.create_gunicorn_config()
             self.create_systemd_service()
             self.create_nginx_config()
-            self.create_supervisor_config()
             self.create_health_check()
             self.start_services()
             self.create_deployment_info()
             
-            print("\\n=== 部署完成 ===")
+            print("\n=== 部署完成 ===")
             print(f"应用名称: {self.app_name}")
             print(f"访问地址: http://localhost")
             print(f"应用端口: {self.port}")
             print(f"服务名称: {self.service_name}")
-            print("\\n常用命令:")
+            print("\n常用命令:")
             print(f"  查看服务状态: systemctl status {self.service_name}")
             print(f"  重启服务: systemctl restart {self.service_name}")
             print(f"  查看日志: journalctl -u {self.service_name} -f")
-            print("  查看nginx状态: systemctl status nginx")
+            print(f"  查看nginx状态: systemctl status nginx")
+            print(f"  健康检查: curl http://localhost/health")
             
         except Exception as e:
             print(f"部署过程中出现错误: {e}")
@@ -386,7 +409,7 @@ def main():
     """主函数"""
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print("""
-OpenCloudOS Flask应用部署脚本
+Flask应用部署脚本
 
 用法:
     python3 app_deploy.py          # 执行完整部署
@@ -406,7 +429,7 @@ OpenCloudOS Flask应用部署脚本
         """)
         return
     
-    deployer = OpenCloudOSDeployer()
+    deployer = FlaskDeployer()
     deployer.deploy()
 
 if __name__ == "__main__":
