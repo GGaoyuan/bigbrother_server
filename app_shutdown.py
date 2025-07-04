@@ -56,8 +56,16 @@ class FlaskShutdown:
         
         # 停止Supervisor（可选）
         print("停止Supervisor服务...")
-        self.run_command("systemctl stop supervisord")
-        self.run_command("systemctl disable supervisord")
+        try:
+            result = subprocess.run(['systemctl', 'list-unit-files', 'supervisord.service'], 
+                                  capture_output=True, text=True)
+            if 'supervisord.service' in result.stdout:
+                self.run_command("systemctl stop supervisord")
+                self.run_command("systemctl disable supervisord")
+            else:
+                print("supervisor服务不存在，跳过")
+        except Exception as e:
+            print(f"检查supervisor服务时出错: {e}")
     
     def remove_systemd_service(self):
         """删除systemd服务"""
@@ -146,6 +154,13 @@ class FlaskShutdown:
             os.remove(supervisor_config)
         else:
             print(f"Supervisor配置文件不存在: {supervisor_config}")
+        
+        # 检查supervisor目录是否存在
+        supervisor_dir = "/etc/supervisord.d"
+        if os.path.exists(supervisor_dir):
+            print(f"Supervisor配置目录存在: {supervisor_dir}")
+        else:
+            print("Supervisor配置目录不存在，跳过supervisor清理")
     
     def cleanup_pid_files(self):
         """清理PID文件"""

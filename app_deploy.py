@@ -61,33 +61,44 @@ class FlaskDeployer:
         """安装系统依赖"""
         print("=== 安装系统依赖 ===")
         
-        # # 更新包管理器
-        # self.run_command("yum update -y")
+        # 检查并安装基础依赖
+        dependencies = [
+            "python3",
+            "python3-pip", 
+            "python3-devel",
+            "gcc",
+            "gcc-c++",
+            "make",
+            "openssl-devel",
+            "libffi-devel",
+            "nginx"
+        ]
         
-        # # 安装基础依赖
-        # dependencies = [
-        #     "python3",
-        #     "python3-pip",
-        #     "python3-devel",
-        #     "gcc",
-        #     "gcc-c++",
-        #     "make",
-        #     "openssl-devel",
-        #     "libffi-devel",
-        #     "nginx",
-        #     "supervisor"
-        # ]
-        
-        # for dep in dependencies:
-        #     self.run_command(f"yum install -y {dep}")
+        for dep in dependencies:
+            print(f"检查并安装: {dep}")
+            self.run_command(f"yum install -y {dep}")
         
         # 启动并启用nginx
         self.run_command("systemctl start nginx")
         self.run_command("systemctl enable nginx")
         
-        # 启动并启用supervisor
-        self.run_command("systemctl start supervisord")
-        self.run_command("systemctl enable supervisord")
+        # 尝试安装和启动supervisor（可选）
+        try:
+            print("尝试安装supervisor...")
+            self.run_command("yum install -y supervisor", check=False)
+            
+            # 检查supervisor是否安装成功
+            result = subprocess.run(['systemctl', 'list-unit-files', 'supervisord.service'], 
+                                  capture_output=True, text=True)
+            if 'supervisord.service' in result.stdout:
+                print("启动supervisor服务...")
+                self.run_command("systemctl start supervisord")
+                self.run_command("systemctl enable supervisord")
+            else:
+                print("supervisor未安装或不可用，跳过supervisor配置")
+        except Exception as e:
+            print(f"supervisor安装失败，跳过: {e}")
+            print("注意: 应用将使用systemd管理，supervisor是可选的")
     
     def create_flask_user(self):
         """创建Flask应用用户"""
